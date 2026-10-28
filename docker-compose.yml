@@ -1,0 +1,19 @@
+services:
+  api:
+    build: .
+    container_name: acompanhamento-backend-api
+    environment:
+      - PORT=3002
+    env_file:
+      - .env  # 👈 Ajustado aqui (.env.deploy -> .env)
+    # O container não herda o sufixo DNS franca.intranet do Windows.
+    extra_hosts:
+      - "sqlteste:172.21.31.129"
+      - "sqlteste.franca.intranet:172.21.31.129"
+    restart: always
+    networks:
+      - traefik-public
+
+networks:
+  traefik-public:
+    external: true

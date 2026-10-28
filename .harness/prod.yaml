@@ -1,0 +1,107 @@
+# Define variáveis globais para facilitar a troca de projeto/ambiente
+variables:
+  - &APP_NAME "acompanhamento-glpi-backend-prod"
+  - &DEPLOY_PATH "/opt/projects/api/ti/acompanhamento-glpi-backend-prod"
+  - &REMOTE_HOST "sistemas.franca.sp.gov.br"
+  - &REMOTE_PORT "22022"
+  - &REMOTE_USER "docker_user"
+  - &EXPOSED_PORT "3002"
+  - &INTERNAL_PORT "3002"
+
+kind: pipeline
+name: deploy_producao
+
+# O servidor reutiliza o mesmo container_name; apenas um deploy pode executar
+# por vez para não haver corrida entre `docker rm` e `docker compose up`.
+concurrency:
+  limit: 1
+
+trigger:
+  branch:
+    - main
+  event:
+    - push
+
+steps:
+  - name: 1_preparar_ambiente
+    image: alpine
+    environment:
+      SSH_KEY: { from_secret: SSH_KEY_HOMOLOGACAO }
+      ENV_BASE64: { from_secret: PROD_ACOMPANHAMENTO_GLPI_ENV_FILE }
+      REMOTE_PORT: *REMOTE_PORT
+      REMOTE_USER: *REMOTE_USER
+      REMOTE_HOST: *REMOTE_HOST
+      DEPLOY_PATH: *DEPLOY_PATH
+    commands:
+      - apk add --no-cache openssh-client tar
+      - mkdir -p ~/.ssh
+      
+      - 'if [ -z "$SSH_KEY" ]; then echo "ERRO: SSH_KEY vazia"; else echo "SSH_KEY ok"; fi'
+      - 'echo "$SSH_KEY" | tr -d "\r\n " | base64 -d > ~/.ssh/id_ed25519'
+      - sed -i '$a\' ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      - ssh-keygen -l -f ~/.ssh/id_ed25519 || echo "Chave invalida"
+      
+      # 💡 AJUSTE: Salvando diretamente como .env para o docker compose ler automaticamente
+      - 'echo "$ENV_BASE64" | tr -d "\r\n " | base64 -d > .env'
+      
+      - "ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p $REMOTE_PORT $REMOTE_USER@$REMOTE_HOST \"rm -rf $DEPLOY_PATH && mkdir -p $DEPLOY_PATH\""
+      - "tar --exclude-vcs --exclude='dev.db' --exclude='node_modules' --exclude='dist' -czf - . | ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p $REMOTE_PORT $REMOTE_USER@$REMOTE_HOST \"tar -xzf - --no-same-owner -C $DEPLOY_PATH\""
+
+  - name: 2_build_remoto
+    image: alpine
+    environment:
+      SSH_KEY: { from_secret: SSH_KEY_HOMOLOGACAO }
+      REMOTE_PORT: *REMOTE_PORT
+      REMOTE_USER: *REMOTE_USER
+      REMOTE_HOST: *REMOTE_HOST
+      DEPLOY_PATH: *DEPLOY_PATH
+      APP_NAME: *APP_NAME
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p ~/.ssh
+      
+      - 'echo "$SSH_KEY" | tr -d "\r\n " | base64 -d > ~/.ssh/id_ed25519'
+      - sed -i '$a\' ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      
+      - "ssh -tt -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p $REMOTE_PORT $REMOTE_USER@$REMOTE_HOST \"cd $DEPLOY_PATH && docker compose build --no-cache\""
+
+  - name: 3_execucao_container
+    image: alpine
+    environment:
+      SSH_KEY: { from_secret: SSH_KEY_HOMOLOGACAO }
+      HOST: *REMOTE_HOST
+      PORT: *REMOTE_PORT
+      USER: *REMOTE_USER
+      PATH_DEST: *DEPLOY_PATH
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p ~/.ssh
+      - 'echo "$SSH_KEY" | tr -d "\r\n " | base64 -d > ~/.ssh/id_ed25519'
+      - sed -i '$a\' ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      
+      # down só remove o container deste projeto. Se outro container ficou com o mesmo
+      # container_name (restart ou outro compose), o up falha. Desliga o restart e apaga pelo nome.
+      - ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $PATH_DEST && docker update --restart=no acompanhamento-backend-api || true && docker compose down --remove-orphans && docker rm -f acompanhamento-backend-api || true && docker compose up -d --force-recreate"
+
+  - name: 4_verificacao
+    image: alpine
+    environment:
+      SSH_KEY: { from_secret: SSH_KEY_HOMOLOGACAO }
+      HOST: *REMOTE_HOST
+      PORT: *REMOTE_PORT
+      USER: *REMOTE_USER
+      PATH_DEST: *DEPLOY_PATH
+    commands:
+      - apk add --no-cache openssh-client
+      - mkdir -p ~/.ssh
+      
+      - 'echo "$SSH_KEY" | tr -d "\r\n " | base64 -d > ~/.ssh/id_ed25519'
+      - sed -i '$a\' ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      
+      # Aguarda a migração e a inicialização antes de mostrar o estado do serviço.
+      - sleep 60
+      - ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -p $PORT $USER@$HOST "cd $PATH_DEST && docker compose ps"

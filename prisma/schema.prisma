@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+}
+
+model User {
+  id                 Int           @id @default(autoincrement())
+  username           String        @unique @map("username")
+  nome               String?       @map("nome")
+  email              String?       @map("email")
+  role               String        @default("TECNICO") @map("role") // 'ADMIN', 'TECNICO' ou 'VISUALIZADOR'
+  isAtivo            Boolean       @default(true) @map("is_ativo")
+  glpiUserToken      String?       @map("glpi_user_token")
+  gitnessAccessToken String?       @map("gitness_access_token")
+  glpiUserId         Int?          @unique @map("glpi_user_id")
+  criadoEm           DateTime      @default(now()) @map("criado_em")
+  atualizadoEm       DateTime      @updatedAt @map("atualizado_em")
+
+  agendamentos       Agendamento[]
+  sessions           AppSession[]
+  auditLogs          AuditLog[]
+
+  @@map("users")
+}
+
+model AppSession {
+  id                 String   @id @default(uuid()) @db.NVarChar(36)
+  userId             Int      @map("user_id")
+  ambiente           String   @db.NVarChar(64)
+  glpiUrl            String   @map("glpi_url") @db.NVarChar(512)
+  encryptedToken     String   @map("encrypted_token") @db.NVarChar(2048)
+  csrfToken          String   @unique @map("csrf_token") @db.NVarChar(64)
+  expiresAt          DateTime @map("expires_at")
+  invalidatedAt      DateTime? @map("invalidated_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("app_sessions")
+}
+
+model AuditLog {
+  id                 Int      @id @default(autoincrement())
+  userId             Int?     @map("user_id")
+  action             String
+  entity             String
+  entityId           String?  @map("entity_id")
+  ambiente           String?
+  result             String
+  details            String?
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user               User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model SystemConfig {
+  id                 Int      @id @default(autoincrement())
+  ambiente           String   @unique @default("HOMOLOGACAO") @map("ambiente")
+  isAtivo            Boolean  @default(true) @map("is_ativo")
+  glpiUrl            String?  @map("glpi_url")
+  glpiAppToken       String?  @map("glpi_app_token")
+  glpiAuthMode       String?  @map("glpi_auth_mode")
+  glpiUser           String?  @map("glpi_user")
+  glpiUserToken      String?  @map("glpi_user_token")
+  gitnessUrl         String?  @map("gitness_url")
+  gitnessAuthMode    String?  @map("gitness_auth_mode")
+  gitnessAccessToken String?  @map("gitness_access_token")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("system_config")
+}
+
+model TarefaPlanejada {
+  id                   Int      @id @default(autoincrement())
+  ambiente             String   @default("PRODUCAO") @map("ambiente")
+  chamadoId            Int?     @map("chamado_id")
+  nomeTarefa           String   @map("nome_tarefa")
+  tarefa               String
+  resultadoEsperado    String?  @map("resultado_esperado")
+  resultadoAlternativo String?  @map("resultado_alternativo")
+  pendencias           String?
+  analistasIds         String   @map("analistas_ids")
+  dataCriacao          DateTime @default(now()) @map("data_criacao")
+
+  @@map("tarefas_planejadas")
+}
+
+model Agendamento {
+  id          Int      @id @default(autoincrement())
+  ambiente    String   @default("PRODUCAO") @map("ambiente")
+  ticketId    Int      @map("ticket_id")
+  tecnicoId   Int      @map("tecnico_id")
+  tecnicoNome String?  @map("tecnico_nome")
+  dataInicio  DateTime @map("data_inicio")
+  dataFim     DateTime @map("data_fim")
+  descricao   String?
+  status      String   @default("PENDENTE") @map("status")
+  glpiTaskId  Int?     @map("glpi_task_id")
+  glpiUrl     String?  @db.NVarChar(512)
+  idempotencyKey String? @unique @map("idempotency_key") @db.NVarChar(64)
+  integrationKey String? @unique @map("integration_key") @db.NVarChar(800)
+  criadoPorId Int? @map("criado_por_id")
+  canceladoEm DateTime? @map("cancelado_em")
+  criadoEm    DateTime @default(now()) @map("criado_em")
+
+  usuarioId   Int?     @map("usuario_id")
+  usuario     User?    @relation(fields: [usuarioId], references: [id])
+
+  @@map("agendamentos")
+}
